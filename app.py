@@ -2,11 +2,18 @@ import streamlit as st
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-import openai
+from openai import OpenAI
 import hashlib
 
 # ================= CONFIG =================
-openai.api_key = st.secrets.get("OPENAI_API_KEY", "")
+st.set_page_config(page_title="⚽ AI Football News", layout="wide")
+
+# Secure API key
+if "OPENAI_API_KEY" not in st.secrets:
+    st.error("❌ Missing OpenAI API key. Add it in Streamlit Cloud → Settings → Secrets")
+    st.stop()
+
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 MAX_ARTICLES = 10
 
@@ -25,35 +32,50 @@ def get_article_content(url):
         headers = {"User-Agent": "Mozilla/5.0"}
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
+
         paragraphs = soup.find_all("p")
         text = " ".join([p.get_text() for p in paragraphs])
-        return text[:5000]
-    except:
+
+        return text[:4000]
+    except Exception as e:
         return None
 
 
 def summarize_article(text):
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "user", "content": f"Summarize this football article into a short engaging Facebook post:\n{text}"}
+                {
+                    "role": "user",
+                    "content": f"""
+Summarize this football news article into a short, engaging Facebook post.
+Keep it punchy, exciting, and informative.
+
+{text}
+"""
+                }
             ],
-            temperature=0.7
+            temperature=0.7,
         )
+
         return response.choices[0].message.content.strip()
+
     except Exception as e:
-        return f"Error: {e}"
+        return f"❌ AI Error: {e}"
 
 
+@st.cache_data(ttl=300)
 def fetch_news():
     articles = []
     seen = set()
 
     for source in SOURCES:
         feed = feedparser.parse(source)
+
         for entry in feed.entries[:MAX_ARTICLES]:
             article_id = hashlib.md5(entry.link.encode()).hexdigest()
+
             if article_id in seen:
                 continue
 
@@ -73,19 +95,22 @@ def fetch_news():
 
     return articles
 
-# ================= STREAMLIT UI =================
 
-st.set_page_config(page_title="⚽ AI Football News", layout="wide")
+# ================= UI =================
 
 st.title("⚽ AI Football News Scraper")
-st.write("Latest football news automatically summarized for social media.")
+st.caption("Auto-summarized football news ready for Facebook posting")
 
-if st.button("🔄 Fetch Latest News"):
-    with st.spinner("Fetching & summarizing..."):
-        news = fetch_news()
+st.write("✅ App running...")
 
-    for article in news:
-        st.subheader(article["title"])
-        st.write(article["summary"])
-        st.markdown(f"[Read full article]({article['link']})")
-        st.divider()
+with st.spinner("Fetching latest football news..."):
+    news = fetch_news()
+
+if not news:
+    st.warning("⚠️ No articles found or an error occurred.")
+
+for article in news:
+    st.subheader(article["title"])
+    st.write(article["summary"])
+    st.markdown(f"[🔗 Read full article]({article['link']})")
+    st.divider()
